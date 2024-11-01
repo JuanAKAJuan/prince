@@ -6,9 +6,22 @@ typedef enum { IDLE, WALK_LEFT, WALK_RIGHT, WALK_UP, WALK_DOWN } PlayerState;
 int main() {
     const int SCREEN_WIDTH{1280};
     const int SCREEN_HEIGHT{800};
+
     const int PLAYER_SPRITE_COLUMNS{6};
     const int PLAYER_SPRITE_ROWS{10};
+
     const float FRAME_TIME{0.1f};
+
+    const int MAP_ROWS{10};
+    const int MAP_COLS{10};
+    const int TILE_SIZE{32};
+    int tileMap[MAP_ROWS][MAP_COLS] = {
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 0, 1, 0, 1, 1, 1, 0, 1, 1},
+        {1, 0, 1, 1, 0, 0, 1, 1, 1, 1}, {1, 0, 1, 0, 0, 0, 0, 1, 0, 1},
+        {1, 1, 0, 1, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 1},
+        {1, 0, 1, 0, 1, 1, 1, 1, 1, 1}, {1, 0, 0, 1, 0, 0, 1, 0, 1, 1},
+        {0, 1, 1, 1, 0, 0, 0, 0, 1, 1}, {1, 1, 0, 0, 0, 0, 0, 0, 1, 1},
+    };
 
     // Tell the window to use vsync and work on high DPI displays
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
@@ -16,45 +29,45 @@ int main() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Prince");
 
     Texture2D characterSheet = LoadTexture("resources/Player/Player.png");
+    Texture2D tileTextures[2] = {0};
+    tileTextures[0] = LoadTexture("resources/Tiles/Grass_Middle.png");
+    tileTextures[1] = LoadTexture("resources/Tiles/Water_Middle.png");
 
     int frameWidth = characterSheet.width / PLAYER_SPRITE_COLUMNS;
     int frameHeight = characterSheet.height / PLAYER_SPRITE_ROWS;
 
     PlayerState playerState{IDLE};
-    Vector3 playerPosition = {0.0f, 1.0f, 0.0f};
+    Vector2 playerPosition = {MAP_COLS * TILE_SIZE / 2.0f,
+                              MAP_ROWS * TILE_SIZE / 2.0f};
 
     int currentFrame{0};
     float frameCounter{0.0f};
-    Rectangle frameRectangle = {0.0f, 0.0f, (float)frameWidth,
-                                (float)frameHeight};
+    Rectangle frameRectangle = {0.0f, 0.0f, static_cast<float>(frameWidth),
+                                static_cast<float>(frameHeight)};
 
-    Vector3 cameraOffset = {0.0f, 25.0f, 30.0f};
-    float moveSpeed = 0.2f;
+    Camera2D camera = {0};
+    camera.target = playerPosition;
+    camera.offset = (Vector2){GetRenderWidth() / 2.0f, GetRenderHeight() / 2.0f};
+    camera.zoom = 1.0f;
+
+    float moveSpeed = TILE_SIZE * 0.1f;
     float zoomSpeed = 1.0f;
     float minimumZoom = 5.0f;
     float maximumZoom = 30.0f;
 
-    Camera3D camera = {0};
-    camera.target = playerPosition;
-    camera.up = (Vector3){0.0f, 1.0f, 0.0f};
-    camera.fovy = 45.0f;
-    camera.projection = CAMERA_PERSPECTIVE;
-
-    float yToZRatio = cameraOffset.y / cameraOffset.z;
-
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
-        Vector3 playerMovement = {0.0f, 0.0f, 0.0f};
+        Vector2 playerMovement = {0.0f, 0.0f};
         bool isMoving = false;
 
         if (IsKeyDown(KEY_W)) {
-            playerMovement.z -= moveSpeed;
+            playerMovement.y -= moveSpeed;
             playerState = WALK_UP;
             isMoving = true;
         }
         if (IsKeyDown(KEY_S)) {
-            playerMovement.z += moveSpeed;
+            playerMovement.y += moveSpeed;
             playerState = WALK_DOWN;
             isMoving = true;
         }
@@ -73,24 +86,18 @@ int main() {
             playerState = IDLE;
 
         playerPosition.x += playerMovement.x;
-        playerPosition.z += playerMovement.z;
+        playerPosition.y += playerMovement.y;
 
         float wheelMove = GetMouseWheelMove();
-        cameraOffset.z -= wheelMove * zoomSpeed;
-        cameraOffset.y -= wheelMove * zoomSpeed;
+        camera.zoom += wheelMove * zoomSpeed;
 
-        if (cameraOffset.z < minimumZoom)
-            cameraOffset.z = minimumZoom;
-        if (cameraOffset.z > maximumZoom)
-            cameraOffset.z = maximumZoom;
+        if (camera.zoom < minimumZoom)
+            camera.zoom = minimumZoom;
+        if (camera.zoom > maximumZoom)
+            camera.zoom = maximumZoom;
 
-        // Adjust the Y-coordinate proportionally to maintain the zoom effect
-        cameraOffset.y = cameraOffset.z * yToZRatio;
-
-        camera.position =
-            (Vector3){playerPosition.x + cameraOffset.x, cameraOffset.y,
-                      playerPosition.z + cameraOffset.z};
         camera.target = playerPosition;
+        camera.offset = (Vector2){GetRenderWidth() / 2.0f, GetRenderHeight() / 2.0f};
 
         // Frame animation logic
         frameCounter += GetFrameTime();
@@ -103,37 +110,60 @@ int main() {
                 currentFrame = 0;
         }
 
+        frameRectangle.x = static_cast<float>(currentFrame * frameWidth);
+        frameRectangle.width = static_cast<float>(frameWidth);
+
         switch (playerState) {
             case IDLE:
                 frameRectangle.y = 0.0f; // 1st row
                 break;
             case WALK_DOWN:
-                frameRectangle.y = (float)frameHeight * 3; // 4th row
+                frameRectangle.y =
+                    static_cast<float>(frameHeight * 3); // 4th row
                 break;
             case WALK_UP:
-                frameRectangle.y = (float)frameHeight * 5; // 6th row
+                frameRectangle.y =
+                    static_cast<float>(frameHeight * 5); // 6th row
                 break;
             case WALK_LEFT:
-                frameRectangle.y = (float)frameHeight * 4; // 5th row
-                frameRectangle.width = -(float)frameWidth;
+                frameRectangle.y =
+                    static_cast<float>(frameHeight * 4); // 5th row
+                frameRectangle.width = -frameRectangle.width;
+                frameRectangle.x += frameWidth;
                 break;
             case WALK_RIGHT:
-                frameRectangle.y = (float)frameHeight * 4; // 5th row
-                frameRectangle.width = (float)frameWidth;
+                frameRectangle.y =
+                    static_cast<float>(frameHeight * 4); // 5th row
                 break;
         }
 
-        // Update the frame to make it animated
-        frameRectangle.x = (float)(currentFrame * frameWidth);
-
         BeginDrawing();
         ClearBackground(DARKGRAY);
+        BeginMode2D(camera);
+        for (int y = 0; y < MAP_ROWS; y++) {
+            for (int x = 0; x < MAP_COLS; x++) {
+                int tileType = tileMap[y][x];
+                Vector2 position = {static_cast<float>(x * TILE_SIZE),
+                                    static_cast<float>(y * TILE_SIZE)};
+                DrawTextureEx(tileTextures[tileType], position, 0.0f,
+                              static_cast<float>(TILE_SIZE) /
+                                  tileTextures[tileType].width,
+                              WHITE);
+            }
+        }
 
-        BeginMode3D(camera);
+        float playerScale = 2.0f;
+        Rectangle destinationRectangle = {playerPosition.x, playerPosition.y,
+                                          frameWidth * playerScale,
+                                          frameHeight * playerScale};
 
-        DrawBillboardRec(camera, characterSheet, frameRectangle, playerPosition,
-                         (Vector2){2.0f, 2.0f}, WHITE);
-        EndMode3D();
+        Vector2 origin = {frameWidth * playerScale / 2.0f,
+                          frameHeight * playerScale / 2.0f};
+
+        DrawTexturePro(characterSheet, frameRectangle, destinationRectangle,
+                       origin, 0.0f, WHITE);
+
+        EndMode2D();
 
         DrawFPS(10, 10);
 
@@ -141,6 +171,8 @@ int main() {
     }
 
     UnloadTexture(characterSheet);
+    UnloadTexture(tileTextures[0]);
+    UnloadTexture(tileTextures[1]);
     CloseWindow();
     return 0;
 }
