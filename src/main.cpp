@@ -1,178 +1,241 @@
 #include "raylib.h"
-#include "rlgl.h"
+#include <algorithm>
+#include <array>
 
-typedef enum { IDLE, WALK_LEFT, WALK_RIGHT, WALK_UP, WALK_DOWN } PlayerState;
+namespace GameConstants {
+constexpr int SCREEN_WIDTH{1280};
+constexpr int SCREEN_HEIGHT{800};
+constexpr int PLAYER_SPRITE_COLUMNS{6};
+constexpr int PLAYER_SPRITE_ROWS{10};
+constexpr float FRAME_TIME{0.1f};
+constexpr int MAP_ROWS{10};
+constexpr int MAP_COLS{10};
+constexpr int TILE_SIZE{32};
+constexpr float MOVE_SPEED{TILE_SIZE * 0.1f};
+constexpr float ZOOM_SPEED{1.0f};
+constexpr float MIN_ZOOM{5.0f};
+constexpr float MAX_ZOOM{30.0f};
+constexpr float PLAYER_SCALE{2.0f};
+} // namespace GameConstants
 
-int main() {
-    const int SCREEN_WIDTH{1280};
-    const int SCREEN_HEIGHT{800};
+enum class PlayerState { IDLE, WALK_LEFT, WALK_RIGHT, WALK_UP, WALK_DOWN };
 
-    const int PLAYER_SPRITE_COLUMNS{6};
-    const int PLAYER_SPRITE_ROWS{10};
+class Player {
+public:
+    PlayerState state_{PlayerState::IDLE};
+    Vector2 position_;
+    int currentFrame_{0};
+    float frameCounter_{0.0f};
+    Rectangle frameRect_ = {0};
 
-    const float FRAME_TIME{0.1f};
+    void updateAnimation(float frameWidth, float frameHeight) {
+        frameCounter_ += GetFrameTime();
+        if (frameCounter_ >= GameConstants::FRAME_TIME) {
+            frameCounter_ = 0.0f;
+            currentFrame_ =
+                (currentFrame_ + 1) % GameConstants::PLAYER_SPRITE_COLUMNS;
+        }
+        updateFrameRectangle(frameWidth, frameHeight);
+    }
 
-    const int MAP_ROWS{10};
-    const int MAP_COLS{10};
-    const int TILE_SIZE{32};
-    int tileMap[MAP_ROWS][MAP_COLS] = {
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, {1, 0, 1, 0, 1, 1, 1, 0, 1, 1},
-        {1, 0, 1, 1, 0, 0, 1, 1, 1, 1}, {1, 0, 1, 0, 0, 0, 0, 1, 0, 1},
-        {1, 1, 0, 1, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 1},
-        {1, 0, 1, 0, 1, 1, 1, 1, 1, 1}, {1, 0, 0, 1, 0, 0, 1, 0, 1, 1},
-        {0, 1, 1, 1, 0, 0, 0, 0, 1, 1}, {1, 1, 0, 0, 0, 0, 0, 0, 1, 1},
-    };
+private:
+    void updateFrameRectangle(float frameWidth, float frameHeight) {
+        frameRect_.x = static_cast<float>(currentFrame_ * frameWidth);
+        frameRect_.width = frameWidth;
 
-    // Tell the window to use vsync and work on high DPI displays
-    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+        switch (state_) {
+            case PlayerState::IDLE:
+                frameRect_.y = 0.0f;
+                break;
+            case PlayerState::WALK_DOWN:
+                frameRect_.y = frameHeight * 3;
+                break;
+            case PlayerState::WALK_UP:
+                frameRect_.y = frameHeight * 5;
+                break;
+            case PlayerState::WALK_LEFT:
+                frameRect_.y = frameHeight * 4;
+                frameRect_.width = -frameRect_.width;
+                frameRect_.x += frameWidth;
+                break;
+            case PlayerState::WALK_RIGHT:
+                frameRect_.y = frameHeight * 4;
+                break;
+        }
+    }
+};
 
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Prince");
+class Game {
+public:
+    Game() {
+        SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+        InitWindow(GameConstants::SCREEN_WIDTH, GameConstants::SCREEN_HEIGHT,
+                   "Prince");
+        SetTargetFPS(60);
+        loadResources();
+        initializeGame();
+    }
 
-    Texture2D characterSheet = LoadTexture("resources/Player/Player.png");
-    Texture2D tileTextures[2] = {0};
-    tileTextures[0] = LoadTexture("resources/Tiles/Grass_Middle.png");
-    tileTextures[1] = LoadTexture("resources/Tiles/Water_Middle.png");
+    ~Game() {
+        unloadResources();
+        CloseWindow();
+    }
 
-    int frameWidth = characterSheet.width / PLAYER_SPRITE_COLUMNS;
-    int frameHeight = characterSheet.height / PLAYER_SPRITE_ROWS;
+    void run() {
+        while (!WindowShouldClose()) {
+            update();
+            render();
+        }
+    }
 
-    PlayerState playerState{IDLE};
-    Vector2 playerPosition = {MAP_COLS * TILE_SIZE / 2.0f,
-                              MAP_ROWS * TILE_SIZE / 2.0f};
+private:
+    Texture2D characterSheet_;
+    std::array<Texture2D, 2> tileTextures_;
+    Player player_;
+    Camera2D camera_{};
 
-    int currentFrame{0};
-    float frameCounter{0.0f};
-    Rectangle frameRectangle = {0.0f, 0.0f, static_cast<float>(frameWidth),
-                                static_cast<float>(frameHeight)};
+    static constexpr std::array<std::array<int, GameConstants::MAP_COLS>,
+                                GameConstants::MAP_ROWS>
+        tileMap_ = {{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                     {1, 0, 1, 0, 1, 1, 1, 0, 1, 1},
+                     {1, 0, 1, 1, 0, 0, 1, 1, 1, 1},
+                     {1, 0, 1, 0, 0, 0, 0, 1, 0, 1},
+                     {1, 1, 0, 1, 1, 0, 0, 0, 0, 1},
+                     {1, 0, 0, 0, 0, 1, 0, 0, 0, 1},
+                     {1, 0, 1, 0, 1, 1, 1, 1, 1, 1},
+                     {1, 0, 0, 1, 0, 0, 1, 0, 1, 1},
+                     {0, 1, 1, 1, 0, 0, 0, 0, 1, 1},
+                     {1, 1, 0, 0, 0, 0, 0, 0, 1, 1}}};
 
-    Camera2D camera = {0};
-    camera.target = playerPosition;
-    camera.offset = (Vector2){GetRenderWidth() / 2.0f, GetRenderHeight() / 2.0f};
-    camera.zoom = 1.0f;
+    void loadResources() {
+        characterSheet_ = LoadTexture("resources/Player/Player.png");
+        tileTextures_[0] = LoadTexture("resources/Tiles/Grass_Middle.png");
+        tileTextures_[1] = LoadTexture("resources/Tiles/Water_Middle.png");
+    }
 
-    float moveSpeed = TILE_SIZE * 0.1f;
-    float zoomSpeed = 1.0f;
-    float minimumZoom = 5.0f;
-    float maximumZoom = 30.0f;
+    void unloadResources() {
+        UnloadTexture(characterSheet_);
+        for (const auto& texture : tileTextures_) {
+            UnloadTexture(texture);
+        }
+    }
 
-    SetTargetFPS(60);
+    void initializeGame() {
+        player_.position_ = {
+            GameConstants::MAP_COLS * GameConstants::TILE_SIZE / 2.0f,
+            GameConstants::MAP_ROWS * GameConstants::TILE_SIZE / 2.0f};
 
-    while (!WindowShouldClose()) {
-        Vector2 playerMovement = {0.0f, 0.0f};
-        bool isMoving = false;
+        camera_.target = player_.position_;
+        camera_.offset = {static_cast<float>(GetRenderWidth()) / 2.0f,
+                          static_cast<float>(GetRenderHeight()) / 2.0f};
+        camera_.zoom = 1.0f;
+    }
+
+    void updatePlayer() {
+        Vector2 movement = {0.0f, 0.0f};
+        bool isMoving{false};
 
         if (IsKeyDown(KEY_W)) {
-            playerMovement.y -= moveSpeed;
-            playerState = WALK_UP;
+            movement.y -= GameConstants::MOVE_SPEED;
+            player_.state_ = PlayerState::WALK_UP;
             isMoving = true;
         }
         if (IsKeyDown(KEY_S)) {
-            playerMovement.y += moveSpeed;
-            playerState = WALK_DOWN;
+            movement.y += GameConstants::MOVE_SPEED;
+            player_.state_ = PlayerState::WALK_DOWN;
             isMoving = true;
         }
         if (IsKeyDown(KEY_A)) {
-            playerMovement.x -= moveSpeed;
-            playerState = WALK_LEFT;
+            movement.x -= GameConstants::MOVE_SPEED;
+            player_.state_ = PlayerState::WALK_LEFT;
             isMoving = true;
         }
         if (IsKeyDown(KEY_D)) {
-            playerMovement.x += moveSpeed;
-            playerState = WALK_RIGHT;
+            movement.x += GameConstants::MOVE_SPEED;
+            player_.state_ = PlayerState::WALK_RIGHT;
             isMoving = true;
         }
 
-        if (!isMoving)
-            playerState = IDLE;
-
-        playerPosition.x += playerMovement.x;
-        playerPosition.y += playerMovement.y;
-
-        float wheelMove = GetMouseWheelMove();
-        camera.zoom += wheelMove * zoomSpeed;
-
-        if (camera.zoom < minimumZoom)
-            camera.zoom = minimumZoom;
-        if (camera.zoom > maximumZoom)
-            camera.zoom = maximumZoom;
-
-        camera.target = playerPosition;
-        camera.offset = (Vector2){GetRenderWidth() / 2.0f, GetRenderHeight() / 2.0f};
-
-        // Frame animation logic
-        frameCounter += GetFrameTime();
-        if (frameCounter >= FRAME_TIME) {
-            frameCounter = 0.0f;
-            currentFrame++;
-
-            // Loop back to the first frame
-            if (currentFrame >= PLAYER_SPRITE_COLUMNS)
-                currentFrame = 0;
+        if (!isMoving) {
+            player_.state_ = PlayerState::IDLE;
         }
 
-        frameRectangle.x = static_cast<float>(currentFrame * frameWidth);
-        frameRectangle.width = static_cast<float>(frameWidth);
+        player_.position_.x += movement.x;
+        player_.position_.y += movement.y;
+    }
 
-        switch (playerState) {
-            case IDLE:
-                frameRectangle.y = 0.0f; // 1st row
-                break;
-            case WALK_DOWN:
-                frameRectangle.y =
-                    static_cast<float>(frameHeight * 3); // 4th row
-                break;
-            case WALK_UP:
-                frameRectangle.y =
-                    static_cast<float>(frameHeight * 5); // 6th row
-                break;
-            case WALK_LEFT:
-                frameRectangle.y =
-                    static_cast<float>(frameHeight * 4); // 5th row
-                frameRectangle.width = -frameRectangle.width;
-                frameRectangle.x += frameWidth;
-                break;
-            case WALK_RIGHT:
-                frameRectangle.y =
-                    static_cast<float>(frameHeight * 4); // 5th row
-                break;
-        }
+    void updateCamera() {
+        float wheelMove{GetMouseWheelMove()};
+        camera_.zoom =
+            std::clamp(camera_.zoom + wheelMove * GameConstants::ZOOM_SPEED,
+                       GameConstants::MIN_ZOOM, GameConstants::MAX_ZOOM);
 
-        BeginDrawing();
-        ClearBackground(DARKGRAY);
-        BeginMode2D(camera);
-        for (int y = 0; y < MAP_ROWS; y++) {
-            for (int x = 0; x < MAP_COLS; x++) {
-                int tileType = tileMap[y][x];
-                Vector2 position = {static_cast<float>(x * TILE_SIZE),
-                                    static_cast<float>(y * TILE_SIZE)};
-                DrawTextureEx(tileTextures[tileType], position, 0.0f,
-                              static_cast<float>(TILE_SIZE) /
-                                  tileTextures[tileType].width,
+        camera_.target = player_.position_;
+        camera_.offset = {static_cast<float>(GetRenderWidth()) / 2.0f,
+                          static_cast<float>(GetRenderHeight()) / 2.0f};
+    }
+
+    void update() {
+        updatePlayer();
+        updateCamera();
+
+        const int frameWidth{characterSheet_.width /
+                             GameConstants::PLAYER_SPRITE_COLUMNS};
+        const int frameHeight{characterSheet_.height /
+                              GameConstants::PLAYER_SPRITE_ROWS};
+        player_.updateAnimation(frameWidth, frameHeight);
+    }
+
+    void renderMap() const {
+        for (int y = 0; y < GameConstants::MAP_ROWS; y++) {
+            for (int x = 0; x < GameConstants::MAP_COLS; x++) {
+                int tileType{tileMap_[y][x]};
+                Vector2 position = {
+                    static_cast<float>(x * GameConstants::TILE_SIZE),
+                    static_cast<float>(y * GameConstants::TILE_SIZE)};
+                const float scale{static_cast<float>(GameConstants::TILE_SIZE) /
+                                  tileTextures_[tileType].width};
+
+                DrawTextureEx(tileTextures_[tileType], position, 0.0f, scale,
                               WHITE);
             }
         }
+    }
 
-        float playerScale = 2.0f;
-        Rectangle destinationRectangle = {playerPosition.x, playerPosition.y,
-                                          frameWidth * playerScale,
-                                          frameHeight * playerScale};
+    void renderPlayer() const {
+        const float frameWidth{static_cast<float>(characterSheet_.width) /
+                               GameConstants::PLAYER_SPRITE_COLUMNS};
+        const float frameHeight{static_cast<float>(characterSheet_.height) /
+                                GameConstants::PLAYER_SPRITE_ROWS};
+        const Rectangle destRect = {player_.position_.x, player_.position_.y,
+                                    frameWidth * GameConstants::PLAYER_SCALE,
+                                    frameHeight * GameConstants::PLAYER_SCALE};
 
-        Vector2 origin = {frameWidth * playerScale / 2.0f,
-                          frameHeight * playerScale / 2.0f};
+        const Vector2 origin = {
+            frameWidth * GameConstants::PLAYER_SCALE / 2.0f,
+            frameHeight * GameConstants::PLAYER_SCALE / 2.0f,
+        };
 
-        DrawTexturePro(characterSheet, frameRectangle, destinationRectangle,
-                       origin, 0.0f, WHITE);
+        DrawTexturePro(characterSheet_, player_.frameRect_, destRect, origin,
+                       0.0f, WHITE);
+    }
 
+    void render() {
+        BeginDrawing();
+        ClearBackground(DARKGRAY);
+
+        BeginMode2D(camera_);
+        renderMap();
+        renderPlayer();
         EndMode2D();
 
         DrawFPS(10, 10);
-
         EndDrawing();
     }
+};
 
-    UnloadTexture(characterSheet);
-    UnloadTexture(tileTextures[0]);
-    UnloadTexture(tileTextures[1]);
-    CloseWindow();
+int main() {
+    Game game;
+    game.run();
     return 0;
 }
